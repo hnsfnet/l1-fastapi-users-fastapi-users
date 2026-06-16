@@ -13,8 +13,13 @@ from tests.conftest import UserModel, get_mock_authentication
 
 @pytest.fixture
 def app_factory(get_user_manager, mock_authentication):
-    def _app_factory(requires_verification: bool) -> FastAPI:
-        mock_authentication_bis = get_mock_authentication(name="mock-bis")
+    def _app_factory(requires_verification: bool, debug: bool = False) -> FastAPI:
+        if debug:
+            mock_authentication.debug = debug
+            mock_authentication_bis = get_mock_authentication(name="mock-bis")
+            mock_authentication_bis.debug = debug
+        else:
+            mock_authentication_bis = get_mock_authentication(name="mock-bis")
         authenticator = Authenticator(
             [mock_authentication, mock_authentication_bis], get_user_manager
         )
@@ -46,12 +51,25 @@ def app_factory(get_user_manager, mock_authentication):
 )
 async def test_app_client(
     request, get_test_client, app_factory
-) -> AsyncGenerator[tuple[httpx.AsyncClient, bool], None]:
+) -> AsyncGenerator[tuple[httpx.AsyncClient, bool, bool], None]:
     requires_verification = request.param
-    app = app_factory(requires_verification)
+    debug = False
+    app = app_factory(requires_verification, debug)
 
     async for client in get_test_client(app):
-        yield client, requires_verification
+        yield client, requires_verification, debug
+
+
+@pytest_asyncio.fixture
+async def test_app_client_debug(
+    get_test_client, app_factory
+) -> AsyncGenerator[tuple[httpx.AsyncClient, bool, bool], None]:
+    requires_verification = False
+    debug = True
+    app = app_factory(requires_verification, debug)
+
+    async for client in get_test_client(app):
+        yield client, requires_verification, debug
 
 
 @pytest.mark.router
@@ -61,10 +79,10 @@ class TestLogin:
     async def test_empty_body(
         self,
         path,
-        test_app_client: tuple[httpx.AsyncClient, bool],
+        test_app_client: tuple[httpx.AsyncClient, bool, bool],
         user_manager,
     ):
-        client, _ = test_app_client
+        client, _, _ = test_app_client
         response = await client.post(path, data={})
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
         assert user_manager.on_after_login.called is False
@@ -72,10 +90,10 @@ class TestLogin:
     async def test_missing_username(
         self,
         path,
-        test_app_client: tuple[httpx.AsyncClient, bool],
+        test_app_client: tuple[httpx.AsyncClient, bool, bool],
         user_manager,
     ):
-        client, _ = test_app_client
+        client, _, _ = test_app_client
         data = {"password": "guinevere"}
         response = await client.post(path, data=data)
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
@@ -84,10 +102,10 @@ class TestLogin:
     async def test_missing_password(
         self,
         path,
-        test_app_client: tuple[httpx.AsyncClient, bool],
+        test_app_client: tuple[httpx.AsyncClient, bool, bool],
         user_manager,
     ):
-        client, _ = test_app_client
+        client, _, _ = test_app_client
         data = {"username": "king.arthur@camelot.bt"}
         response = await client.post(path, data=data)
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
@@ -96,10 +114,10 @@ class TestLogin:
     async def test_not_existing_user(
         self,
         path,
-        test_app_client: tuple[httpx.AsyncClient, bool],
+        test_app_client: tuple[httpx.AsyncClient, bool, bool],
         user_manager,
     ):
-        client, _ = test_app_client
+        client, _, _ = test_app_client
         data = {"username": "lancelot@camelot.bt", "password": "guinevere"}
         response = await client.post(path, data=data)
         assert response.status_code == status.HTTP_400_BAD_REQUEST
@@ -110,10 +128,10 @@ class TestLogin:
     async def test_wrong_password(
         self,
         path,
-        test_app_client: tuple[httpx.AsyncClient, bool],
+        test_app_client: tuple[httpx.AsyncClient, bool, bool],
         user_manager,
     ):
-        client, _ = test_app_client
+        client, _, _ = test_app_client
         data = {"username": "king.arthur@camelot.bt", "password": "percival"}
         response = await client.post(path, data=data)
         assert response.status_code == status.HTTP_400_BAD_REQUEST
@@ -128,11 +146,11 @@ class TestLogin:
         self,
         path,
         email,
-        test_app_client: tuple[httpx.AsyncClient, bool],
+        test_app_client: tuple[httpx.AsyncClient, bool, bool],
         user_manager,
         user: UserModel,
     ):
-        client, requires_verification = test_app_client
+        client, requires_verification, _ = test_app_client
         data = {"username": email, "password": "guinevere"}
         response = await client.post(path, data=data)
         if requires_verification:
@@ -153,11 +171,11 @@ class TestLogin:
         self,
         path,
         email,
-        test_app_client: tuple[httpx.AsyncClient, bool],
+        test_app_client: tuple[httpx.AsyncClient, bool, bool],
         user_manager,
         verified_user: UserModel,
     ):
-        client, _ = test_app_client
+        client, _, _ = test_app_client
         data = {"username": email, "password": "excalibur"}
         response = await client.post(path, data=data)
         assert response.status_code == status.HTTP_200_OK
@@ -173,16 +191,36 @@ class TestLogin:
     async def test_inactive_user(
         self,
         path,
-        test_app_client: tuple[httpx.AsyncClient, bool],
+        test_app_client: tuple[httpx.AsyncClient, bool, bool],
         user_manager,
     ):
-        client, _ = test_app_client
+        client, _, _ = test_app_client
         data = {"username": "percival@camelot.bt", "password": "angharad"}
         response = await client.post(path, data=data)
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         data = cast(dict[str, Any], response.json())
         assert data["detail"] == ErrorCode.LOGIN_BAD_CREDENTIALS
         assert user_manager.on_after_login.called is False
+
+    async def test_valid_credentials_debug_mode(
+        self,
+        path,
+        test_app_client_debug: tuple[httpx.AsyncClient, bool, bool],
+        user_manager,
+        verified_user: UserModel,
+    ):
+        client, _, _ = test_app_client_debug
+        data = {"username": "lake.lady@camelot.bt", "password": "excalibur"}
+        response = await client.post(path, data=data)
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json() == {
+            "access_token": str(verified_user.id),
+            "token_type": "bearer",
+        }
+        assert "X-Authentication-Backend" in response.headers
+        backend_name = "mock" if "mock/login" in path else "mock-bis"
+        assert response.headers["X-Authentication-Backend"] == backend_name
+        assert user_manager.on_after_login.called is True
 
 
 @pytest.mark.router
@@ -192,9 +230,9 @@ class TestLogout:
     async def test_missing_token(
         self,
         path,
-        test_app_client: tuple[httpx.AsyncClient, bool],
+        test_app_client: tuple[httpx.AsyncClient, bool, bool],
     ):
-        client, _ = test_app_client
+        client, _, _ = test_app_client
         response = await client.post(path)
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
@@ -202,10 +240,10 @@ class TestLogout:
         self,
         mocker,
         path,
-        test_app_client: tuple[httpx.AsyncClient, bool],
+        test_app_client: tuple[httpx.AsyncClient, bool, bool],
         user: UserModel,
     ):
-        client, requires_verification = test_app_client
+        client, requires_verification, _ = test_app_client
         response = await client.post(
             path, headers={"Authorization": f"Bearer {user.id}"}
         )
@@ -218,14 +256,30 @@ class TestLogout:
         self,
         mocker,
         path,
-        test_app_client: tuple[httpx.AsyncClient, bool],
+        test_app_client: tuple[httpx.AsyncClient, bool, bool],
         verified_user: UserModel,
     ):
-        client, _ = test_app_client
+        client, _, _ = test_app_client
         response = await client.post(
             path, headers={"Authorization": f"Bearer {verified_user.id}"}
         )
         assert response.status_code == status.HTTP_200_OK
+
+    async def test_logout_debug_mode(
+        self,
+        mocker,
+        path,
+        test_app_client_debug: tuple[httpx.AsyncClient, bool, bool],
+        verified_user: UserModel,
+    ):
+        client, _, _ = test_app_client_debug
+        response = await client.post(
+            path, headers={"Authorization": f"Bearer {verified_user.id}"}
+        )
+        assert response.status_code == status.HTTP_200_OK
+        assert "X-Authentication-Backend" in response.headers
+        backend_name = "mock" if "mock/logout" in path else "mock-bis"
+        assert response.headers["X-Authentication-Backend"] == backend_name
 
 
 @pytest.mark.asyncio

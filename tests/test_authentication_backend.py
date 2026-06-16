@@ -54,9 +54,58 @@ def backend(
     )
 
 
+@pytest.fixture
+def debug_backend(
+    transport: Transport, get_strategy: Callable[..., Strategy]
+) -> AuthenticationBackend:
+    return AuthenticationBackend(
+        name="debug-backend", transport=transport, get_strategy=get_strategy, debug=True
+    )
+
+
 @pytest.mark.asyncio
 @pytest.mark.authentication
 async def test_logout(backend: AuthenticationBackend, user: UserModel):
     strategy = cast(Strategy, backend.get_strategy())
     result = await backend.logout(strategy, user, "TOKEN")
     assert isinstance(result, Response)
+
+
+@pytest.mark.asyncio
+@pytest.mark.authentication
+async def test_login_without_debug(backend: AuthenticationBackend, user: UserModel):
+    strategy = cast(Strategy, backend.get_strategy())
+    response = await backend.login(strategy, user)
+    assert isinstance(response, Response)
+    assert "X-Authentication-Backend" not in response.headers
+
+
+@pytest.mark.asyncio
+@pytest.mark.authentication
+async def test_logout_without_debug(backend: AuthenticationBackend, user: UserModel):
+    strategy = cast(Strategy, backend.get_strategy())
+    response = await backend.logout(strategy, user, "TOKEN")
+    assert isinstance(response, Response)
+    assert "X-Authentication-Backend" not in response.headers
+
+
+@pytest.mark.asyncio
+@pytest.mark.authentication
+async def test_login_with_debug(
+    debug_backend: AuthenticationBackend, user: UserModel
+):
+    strategy = cast(Strategy, debug_backend.get_strategy())
+    response = await debug_backend.login(strategy, user)
+    assert isinstance(response, Response)
+    assert response.headers.get("X-Authentication-Backend") == "debug-backend"
+
+
+@pytest.mark.asyncio
+@pytest.mark.authentication
+async def test_logout_with_debug(
+    debug_backend: AuthenticationBackend, user: UserModel
+):
+    strategy = cast(Strategy, debug_backend.get_strategy())
+    response = await debug_backend.logout(strategy, user, "TOKEN")
+    assert isinstance(response, Response)
+    assert response.headers.get("X-Authentication-Backend") == "debug-backend"

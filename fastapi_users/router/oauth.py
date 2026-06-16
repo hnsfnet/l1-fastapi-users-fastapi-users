@@ -207,6 +207,8 @@ def get_oauth_router(
 
         # Authenticate
         response = await backend.login(strategy, user)
+        if backend.debug:
+            response.headers["X-Authentication-Backend"] = backend.name
         await user_manager.on_after_login(user, request, response)
         return response
 

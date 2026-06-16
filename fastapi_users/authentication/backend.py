@@ -24,26 +24,33 @@ class AuthenticationBackend(Generic[models.UP, models.ID]):
     :param transport: Authentication transport instance.
     :param get_strategy: Dependency callable returning
     an authentication strategy instance.
+    :param debug: Whether to include debug information in responses. Defaults to False.
     """
 
     name: str
     transport: Transport
+    debug: bool
 
     def __init__(
         self,
         name: str,
         transport: Transport,
         get_strategy: DependencyCallable[Strategy[models.UP, models.ID]],
+        debug: bool = False,
     ):
         self.name = name
         self.transport = transport
         self.get_strategy = get_strategy
+        self.debug = debug
 
     async def login(
         self, strategy: Strategy[models.UP, models.ID], user: models.UP
     ) -> Response:
         token = await strategy.write_token(user)
-        return await self.transport.get_login_response(token)
+        response = await self.transport.get_login_response(token)
+        if self.debug:
+            response.headers["X-Authentication-Backend"] = self.name
+        return response
 
     async def logout(
         self, strategy: Strategy[models.UP, models.ID], user: models.UP, token: str
@@ -57,5 +64,8 @@ class AuthenticationBackend(Generic[models.UP, models.ID]):
             response = await self.transport.get_logout_response()
         except TransportLogoutNotSupportedError:
             response = Response(status_code=status.HTTP_204_NO_CONTENT)
+
+        if self.debug:
+            response.headers["X-Authentication-Backend"] = self.name
 
         return response

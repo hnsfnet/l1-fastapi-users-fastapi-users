@@ -27,8 +27,12 @@ from tests.conftest import (
 @pytest.fixture
 def app_factory(secret, get_user_manager_oauth, mock_authentication, oauth_client):
     def _app_factory(
-        redirect_url: str = None, requires_verification: bool = False
+        redirect_url: str = None,
+        requires_verification: bool = False,
+        debug: bool = False,
     ) -> FastAPI:
+        if debug:
+            mock_authentication.debug = debug
         authenticator = Authenticator([mock_authentication], get_user_manager_oauth)
 
         oauth_router = get_oauth_router(
@@ -57,8 +61,8 @@ def app_factory(secret, get_user_manager_oauth, mock_authentication, oauth_clien
 
 
 @pytest.fixture
-def test_app(app_factory):
-    return app_factory()
+def test_app_debug(app_factory):
+    return app_factory(debug=True)
 
 
 @pytest.fixture
@@ -74,6 +78,12 @@ def test_app_requires_verification(app_factory):
 @pytest_asyncio.fixture
 async def test_app_client(test_app, get_test_client):
     async for client in get_test_client(test_app):
+        yield client
+
+
+@pytest_asyncio.fixture
+async def test_app_client_debug(test_app_debug, get_test_client):
+    async for client in get_test_client(test_app_debug):
         yield client
 
 
@@ -249,6 +259,40 @@ class TestCallback:
 
         data = cast(dict[str, Any], response.json())
         assert data["access_token"] == str(user_oauth.id)
+
+        assert user_manager_oauth.on_after_login.called is True
+
+    async def test_active_user_debug_mode(
+        self,
+        async_method_mocker: AsyncMethodMocker,
+        test_app_client_debug: httpx.AsyncClient,
+        oauth_client: BaseOAuth2,
+        user_oauth: UserOAuthModel,
+        user_manager_oauth: UserManagerMock,
+        access_token: str,
+    ):
+        state_jwt = generate_state_token({"csrftoken": "CSRFTOKEN"}, JWT_SECRET)
+        async_method_mocker(oauth_client, "get_access_token", return_value=access_token)
+        async_method_mocker(
+            oauth_client, "get_id_email", return_value=("user_oauth1", user_oauth.email)
+        )
+        async_method_mocker(
+            user_manager_oauth, "oauth_callback", return_value=user_oauth
+        )
+
+        test_app_client_debug.cookies.set("fastapiusersoauthcsrf", "CSRFTOKEN")
+        response = await test_app_client_debug.get(
+            "/oauth/callback",
+            params={"code": "CODE", "state": state_jwt},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+
+        data = cast(dict[str, Any], response.json())
+        assert data["access_token"] == str(user_oauth.id)
+
+        assert "X-Authentication-Backend" in response.headers
+        assert response.headers["X-Authentication-Backend"] == "mock"
 
         assert user_manager_oauth.on_after_login.called is True
 
