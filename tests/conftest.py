@@ -530,11 +530,12 @@ class MockStrategy(Strategy[UserModel, IDType]):
         return None
 
 
-def get_mock_authentication(name: str):
+def get_mock_authentication(name: str, debug_enabled: bool = False):
     return AuthenticationBackend(
         name=name,
         transport=MockTransport(tokenUrl="/login"),
         get_strategy=lambda: MockStrategy(),
+        debug_enabled=debug_enabled,
     )
 
 

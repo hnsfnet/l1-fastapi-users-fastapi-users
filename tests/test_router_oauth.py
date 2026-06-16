@@ -21,6 +21,7 @@ from tests.conftest import (
     UserManagerMock,
     UserModel,
     UserOAuthModel,
+    get_mock_authentication,
 )
 
 
@@ -29,11 +30,20 @@ def app_factory(secret, get_user_manager_oauth, mock_authentication, oauth_clien
     def _app_factory(
         redirect_url: str = None, requires_verification: bool = False
     ) -> FastAPI:
-        authenticator = Authenticator([mock_authentication], get_user_manager_oauth)
+        mock_authentication_bis = get_mock_authentication(name="mock-bis", debug_enabled=True)
+        mock_authentication_debug_disabled = get_mock_authentication(name="mock-debug-disabled", debug_enabled=False)
+        authenticator = Authenticator([mock_authentication, mock_authentication_bis, mock_authentication_debug_disabled], get_user_manager_oauth)
 
         oauth_router = get_oauth_router(
             oauth_client,
-            mock_authentication,
+            mock_authentication_bis,
+            get_user_manager_oauth,
+            secret,
+            redirect_url,
+        )
+        oauth_router_debug_disabled = get_oauth_router(
+            oauth_client,
+            mock_authentication_debug_disabled,
             get_user_manager_oauth,
             secret,
             redirect_url,
@@ -50,6 +60,7 @@ def app_factory(secret, get_user_manager_oauth, mock_authentication, oauth_clien
 
         app = FastAPI()
         app.include_router(oauth_router, prefix="/oauth")
+        app.include_router(oauth_router_debug_disabled, prefix="/oauth-debug-disabled")
         app.include_router(oauth_associate_router, prefix="/oauth-associate")
         return app
 
@@ -251,6 +262,7 @@ class TestCallback:
         assert data["access_token"] == str(user_oauth.id)
 
         assert user_manager_oauth.on_after_login.called is True
+        assert response.headers.get("X-FastAPI-Users-Backend") == "mock-bis"
 
     async def test_inactive_user(
         self,
@@ -316,6 +328,7 @@ class TestCallback:
         data = cast(dict[str, Any], response.json())
         assert data["access_token"] == str(user_oauth.id)
         assert user_manager_oauth.on_after_login.called is True
+        assert response.headers.get("X-FastAPI-Users-Backend") == "mock-bis"
 
     async def test_email_not_available(
         self,
@@ -759,12 +772,52 @@ class TestAssociateCallback:
 async def test_route_names(
     test_app: FastAPI, oauth_client: OAuth2, mock_authentication: AuthenticationBackend
 ):
+    # Test with the mock-bis backend that's actually included in the test app
+    mock_bis_backend = get_mock_authentication(name="mock-bis", debug_enabled=True)
     authorize_route_name = (
-        f"oauth:{oauth_client.name}.{mock_authentication.name}.authorize"
+        f"oauth:{oauth_client.name}.{mock_bis_backend.name}.authorize"
     )
     assert test_app.url_path_for(authorize_route_name) == "/oauth/authorize"
 
     callback_route_name = (
-        f"oauth:{oauth_client.name}.{mock_authentication.name}.callback"
+        f"oauth:{oauth_client.name}.{mock_bis_backend.name}.callback"
     )
     assert test_app.url_path_for(callback_route_name) == "/oauth/callback"
+
+
+@pytest.mark.asyncio
+@pytest.mark.oauth
+@pytest.mark.router
+async def test_debug_enabled_oauth_callback(test_app_client: httpx.AsyncClient, oauth_client: OAuth2, async_method_mocker: AsyncMethodMocker, user_oauth: UserOAuthModel, user_manager_oauth: UserManagerMock):
+    async_method_mocker(oauth_client, "get_access_token", return_value={"access_token": "TOKEN"})
+    async_method_mocker(oauth_client, "get_id_email", return_value=("user_oauth1", user_oauth.email))
+    async_method_mocker(user_manager_oauth, "oauth_callback", return_value=user_oauth)
+
+    state_jwt = generate_state_token({"csrftoken": "CSRFTOKEN"}, JWT_SECRET)
+    test_app_client.cookies.set("fastapiusersoauthcsrf", "CSRFTOKEN")
+    response = await test_app_client.get(
+        "/oauth/callback",
+        params={"code": "CODE", "state": state_jwt},
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.headers.get("X-FastAPI-Users-Backend") == "mock-bis"
+
+
+@pytest.mark.asyncio
+@pytest.mark.oauth
+@pytest.mark.router
+async def test_debug_disabled_oauth_callback(test_app_client: httpx.AsyncClient, oauth_client: OAuth2, async_method_mocker: AsyncMethodMocker, user_oauth: UserOAuthModel, user_manager_oauth: UserManagerMock):
+    async_method_mocker(oauth_client, "get_access_token", return_value={"access_token": "TOKEN"})
+    async_method_mocker(oauth_client, "get_id_email", return_value=("user_oauth1", user_oauth.email))
+    async_method_mocker(user_manager_oauth, "oauth_callback", return_value=user_oauth)
+
+    state_jwt = generate_state_token({"csrftoken": "CSRFTOKEN"}, JWT_SECRET)
+    test_app_client.cookies.set("fastapiusersoauthcsrf", "CSRFTOKEN")
+    response = await test_app_client.get(
+        "/oauth-debug-disabled/callback",
+        params={"code": "CODE", "state": state_jwt},
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    assert "X-FastAPI-Users-Backend" not in response.headers

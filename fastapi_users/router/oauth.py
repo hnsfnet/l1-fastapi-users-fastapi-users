@@ -134,6 +134,7 @@ def get_oauth_router(
                     }
                 },
             },
+            **backend.transport.get_openapi_login_responses_success(),
         },
     )
     async def callback(

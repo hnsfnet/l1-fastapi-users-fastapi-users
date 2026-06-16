@@ -82,6 +82,25 @@ app.include_router(
 
     If you have several OAuth clients and/or several authentication backends, you'll need to create a router for each pair you want to support.
 
+#### Debug mode for OAuth
+
+Just like regular authentication backends, OAuth routers respect the `debug_enabled` flag on the backend. If set to `True`, successful OAuth callback responses will include a `X-FastAPI-Users-Backend` header indicating which backend was used:
+
+```python
+auth_backend_debug = AuthenticationBackend(
+    name="jwt-debug",
+    transport=bearer_transport,
+    get_strategy=get_jwt_strategy,
+    debug_enabled=True,
+)
+
+app.include_router(
+    fastapi_users.get_oauth_router(google_oauth_client, auth_backend_debug, "SECRET"),
+    prefix="/auth/google",
+    tags=["auth"],
+)
+```
+
 #### CSRF Cookie configuration
 
 For security purposes, OAuth routers set a CSRF cookie when the authentication flow is initiated. By default, the cookie is configured with the following parameters:

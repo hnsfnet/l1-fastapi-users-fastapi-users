@@ -50,7 +50,16 @@ def backend(
     transport: Transport, get_strategy: Callable[..., Strategy]
 ) -> AuthenticationBackend:
     return AuthenticationBackend(
-        name="mock", transport=transport, get_strategy=get_strategy
+        name="mock", transport=transport, get_strategy=get_strategy, debug_enabled=True
+    )
+
+
+@pytest.fixture
+def backend_debug_disabled(
+    transport: Transport, get_strategy: Callable[..., Strategy]
+) -> AuthenticationBackend:
+    return AuthenticationBackend(
+        name="mock", transport=transport, get_strategy=get_strategy, debug_enabled=False
     )
 
 
@@ -60,3 +69,31 @@ async def test_logout(backend: AuthenticationBackend, user: UserModel):
     strategy = cast(Strategy, backend.get_strategy())
     result = await backend.logout(strategy, user, "TOKEN")
     assert isinstance(result, Response)
+    assert result.headers.get("X-FastAPI-Users-Backend") == "mock"
+
+
+@pytest.mark.asyncio
+@pytest.mark.authentication
+async def test_login(backend: AuthenticationBackend, user: UserModel):
+    strategy = cast(Strategy, backend.get_strategy())
+    result = await backend.login(strategy, user)
+    assert isinstance(result, Response)
+    assert result.headers.get("X-FastAPI-Users-Backend") == "mock"
+
+
+@pytest.mark.asyncio
+@pytest.mark.authentication
+async def test_logout_debug_disabled(backend_debug_disabled: AuthenticationBackend, user: UserModel):
+    strategy = cast(Strategy, backend_debug_disabled.get_strategy())
+    result = await backend_debug_disabled.logout(strategy, user, "TOKEN")
+    assert isinstance(result, Response)
+    assert "X-FastAPI-Users-Backend" not in result.headers
+
+
+@pytest.mark.asyncio
+@pytest.mark.authentication
+async def test_login_debug_disabled(backend_debug_disabled: AuthenticationBackend, user: UserModel):
+    strategy = cast(Strategy, backend_debug_disabled.get_strategy())
+    result = await backend_debug_disabled.login(strategy, user)
+    assert isinstance(result, Response)
+    assert "X-FastAPI-Users-Backend" not in result.headers

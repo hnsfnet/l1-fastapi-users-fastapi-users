@@ -38,3 +38,24 @@ app.include_router(
     tags=["auth"],
 )
 ```
+
+### Debug mode
+
+The auth router respects the `debug_enabled` flag set on the authentication backend. When enabled, successful login and logout responses will include a `X-FastAPI-Users-Backend` header with the backend name, which is helpful when multiple backends are registered:
+
+```python
+auth_backend_debug = AuthenticationBackend(
+    name="jwt-debug",
+    transport=bearer_transport,
+    get_strategy=get_jwt_strategy,
+    debug_enabled=True,
+)
+
+app.include_router(
+    fastapi_users.get_auth_router(auth_backend_debug),
+    prefix="/auth/jwt",
+    tags=["auth"],
+)
+```
+
+This header is **only** added to successful responses (200, 204), not to error responses (400, 401, 403, etc.), to avoid frontend misinterpretation.

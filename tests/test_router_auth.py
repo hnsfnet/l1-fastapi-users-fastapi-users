@@ -14,9 +14,10 @@ from tests.conftest import UserModel, get_mock_authentication
 @pytest.fixture
 def app_factory(get_user_manager, mock_authentication):
     def _app_factory(requires_verification: bool) -> FastAPI:
-        mock_authentication_bis = get_mock_authentication(name="mock-bis")
+        mock_authentication_bis = get_mock_authentication(name="mock-bis", debug_enabled=True)
+        mock_authentication_debug_disabled = get_mock_authentication(name="mock-debug-disabled", debug_enabled=False)
         authenticator = Authenticator(
-            [mock_authentication, mock_authentication_bis], get_user_manager
+            [mock_authentication, mock_authentication_bis, mock_authentication_debug_disabled], get_user_manager
         )
 
         mock_auth_router = get_auth_router(
@@ -31,10 +32,17 @@ def app_factory(get_user_manager, mock_authentication):
             authenticator,
             requires_verification=requires_verification,
         )
+        mock_debug_disabled_auth_router = get_auth_router(
+            mock_authentication_debug_disabled,
+            get_user_manager,
+            authenticator,
+            requires_verification=requires_verification,
+        )
 
         app = FastAPI()
         app.include_router(mock_auth_router, prefix="/mock")
         app.include_router(mock_bis_auth_router, prefix="/mock-bis")
+        app.include_router(mock_debug_disabled_auth_router, prefix="/mock-debug-disabled")
 
         return app
 
@@ -170,6 +178,11 @@ class TestLogin:
         assert len(args) == 3
         assert all(x is not None for x in args)
 
+        if "bis" in path:
+            assert response.headers.get("X-FastAPI-Users-Backend") == "mock-bis"
+        else:
+            assert response.headers.get("X-FastAPI-Users-Backend") is None
+
     async def test_inactive_user(
         self,
         path,
@@ -213,6 +226,10 @@ class TestLogout:
             assert response.status_code == status.HTTP_403_FORBIDDEN
         else:
             assert response.status_code == status.HTTP_200_OK
+            if "bis" in path:
+                assert response.headers.get("X-FastAPI-Users-Backend") == "mock-bis"
+            else:
+                assert response.headers.get("X-FastAPI-Users-Backend") is None
 
     async def test_valid_credentials_verified(
         self,
@@ -226,6 +243,10 @@ class TestLogout:
             path, headers={"Authorization": f"Bearer {verified_user.id}"}
         )
         assert response.status_code == status.HTTP_200_OK
+        if "bis" in path:
+            assert response.headers.get("X-FastAPI-Users-Backend") == "mock-bis"
+        else:
+            assert response.headers.get("X-FastAPI-Users-Backend") is None
 
 
 @pytest.mark.asyncio
@@ -237,3 +258,29 @@ async def test_route_names(app_factory, mock_authentication):
 
     logout_route_name = f"auth:{mock_authentication.name}.logout"
     assert app.url_path_for(logout_route_name) == "/mock/logout"
+
+
+@pytest.mark.asyncio
+@pytest.mark.router
+async def test_debug_enabled_backend(test_app_client: tuple[httpx.AsyncClient, bool], user: UserModel):
+    client, requires_verification = test_app_client
+    data = {"username": "king.arthur@camelot.bt", "password": "guinevere"}
+    response = await client.post("/mock-bis/login", data=data)
+    if requires_verification:
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+    else:
+        assert response.status_code == status.HTTP_200_OK
+        assert response.headers.get("X-FastAPI-Users-Backend") == "mock-bis"
+
+
+@pytest.mark.asyncio
+@pytest.mark.router
+async def test_debug_disabled_backend(test_app_client: tuple[httpx.AsyncClient, bool], user: UserModel):
+    client, requires_verification = test_app_client
+    data = {"username": "king.arthur@camelot.bt", "password": "guinevere"}
+    response = await client.post("/mock-debug-disabled/login", data=data)
+    if requires_verification:
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+    else:
+        assert response.status_code == status.HTTP_200_OK
+        assert "X-FastAPI-Users-Backend" not in response.headers

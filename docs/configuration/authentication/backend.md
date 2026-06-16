@@ -26,6 +26,22 @@ As you can see, instantiation is quite simple. It accepts the following argument
 * `name` (`str`): Name of the backend. Each backend should have a unique name.
 * `transport` (`Transport`): An instance of a `Transport` class.
 * `get_strategy` (`Callable[..., Strategy]`): A dependency callable returning an instance of a `Strategy` class.
+* `debug_enabled` (`bool`, optional): If `True`, adds a `X-FastAPI-Users-Backend` header to successful login and logout responses containing the backend name. This is useful for debugging which backend was used in production when multiple backends are registered. Default is `False`.
+
+## Debug mode
+
+When `debug_enabled=True`, the backend will add a response header to successful authentication responses:
+
+```python
+auth_backend = AuthenticationBackend(
+    name="jwt",
+    transport=bearer_transport,
+    get_strategy=get_jwt_strategy,
+    debug_enabled=True,
+)
+```
+
+This will add `X-FastAPI-Users-Backend: jwt` to login/logout/OAuth callback responses, but **not** to error responses (400, 401, 403, etc.), so frontend code can't misinterpret failure as success.
 
 ## Next steps
 

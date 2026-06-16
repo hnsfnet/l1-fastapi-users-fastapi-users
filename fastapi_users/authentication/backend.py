@@ -24,26 +24,34 @@ class AuthenticationBackend(Generic[models.UP, models.ID]):
     :param transport: Authentication transport instance.
     :param get_strategy: Dependency callable returning
     an authentication strategy instance.
+    :param debug_enabled: If `True`, add debug headers to login/logout responses
+    to help identify which backend was used. Default is `False`.
     """
 
     name: str
     transport: Transport
+    debug_enabled: bool
 
     def __init__(
         self,
         name: str,
         transport: Transport,
         get_strategy: DependencyCallable[Strategy[models.UP, models.ID]],
+        debug_enabled: bool = False,
     ):
         self.name = name
         self.transport = transport
         self.get_strategy = get_strategy
+        self.debug_enabled = debug_enabled
 
     async def login(
         self, strategy: Strategy[models.UP, models.ID], user: models.UP
     ) -> Response:
         token = await strategy.write_token(user)
-        return await self.transport.get_login_response(token)
+        response = await self.transport.get_login_response(token)
+        if self.debug_enabled:
+            response.headers["X-FastAPI-Users-Backend"] = self.name
+        return response
 
     async def logout(
         self, strategy: Strategy[models.UP, models.ID], user: models.UP, token: str
@@ -58,4 +66,6 @@ class AuthenticationBackend(Generic[models.UP, models.ID]):
         except TransportLogoutNotSupportedError:
             response = Response(status_code=status.HTTP_204_NO_CONTENT)
 
+        if self.debug_enabled:
+            response.headers["X-FastAPI-Users-Backend"] = self.name
         return response
