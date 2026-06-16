@@ -82,6 +82,18 @@ app.include_router(
 
     If you have several OAuth clients and/or several authentication backends, you'll need to create a router for each pair you want to support.
 
+### Custom redirect URL (Post-Login)
+
+You can optionally specify a `next_url` query parameter when calling the `/authorize` endpoint. This URL will be validated and, if valid, the user will be redirected to it after a successful OAuth login.
+
+```ts
+// Frontend example
+const nextUrl = "/dashboard";
+window.location.href = `/auth/google/authorize?next_url=${encodeURIComponent(nextUrl)}`;
+```
+
+The `next_url` parameter is validated to prevent open redirects. Only relative URLs starting with `/` are allowed. Absolute URLs or URLs with schemes (like `https://`) will be rejected.
+
 #### CSRF Cookie configuration
 
 For security purposes, OAuth routers set a CSRF cookie when the authentication flow is initiated. By default, the cookie is configured with the following parameters:
@@ -96,6 +108,18 @@ For security purposes, OAuth routers set a CSRF cookie when the authentication f
 !!! tip
 
     In local development, if you're not using HTTPS, you may want to set `csrf_token_cookie_secure` to `False` so that the cookie is sent by the browser.
+
+#### Custom redirect URL (Post-Login)
+
+You can optionally specify a `next_url` query parameter when calling the `/authorize` endpoint. This URL will be validated and, if valid, the user will be redirected to it after a successful OAuth login.
+
+```ts
+// Frontend example
+const nextUrl = "/dashboard";
+window.location.href = `/auth/google/authorize?next_url=${encodeURIComponent(nextUrl)}`;
+```
+
+The `next_url` parameter is validated to prevent open redirects. Only relative URLs starting with `/` are allowed. Absolute URLs or URLs with schemes (like `https://`) will be rejected.
 
 #### Existing account association
 

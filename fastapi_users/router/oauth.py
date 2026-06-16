@@ -1,5 +1,6 @@
 import secrets
 from typing import Literal
+from urllib.parse import urlparse
 
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
@@ -17,6 +18,7 @@ from fastapi_users.router.common import ErrorCode, ErrorModel
 STATE_TOKEN_AUDIENCE = "fastapi-users:oauth-state"
 CSRF_TOKEN_KEY = "csrftoken"
 CSRF_TOKEN_COOKIE_NAME = "fastapiusersoauthcsrf"
+NEXT_URL_KEY = "next_url"
 
 
 class OAuth2AuthorizeResponse(BaseModel):
@@ -32,6 +34,31 @@ def generate_state_token(
 
 def generate_csrf_token() -> str:
     return secrets.token_urlsafe(32)
+
+
+def is_valid_next_url(next_url: str) -> bool:
+    """Validate that next_url is a relative URL or same-origin absolute URL."""
+    if not next_url or next_url.strip() == "":
+        return False
+
+    parsed = urlparse(next_url)
+
+    if parsed.scheme and parsed.scheme not in ("http", "https"):
+        return False
+
+    if parsed.netloc and parsed.path == "":
+        return False
+
+    if parsed.scheme or parsed.netloc:
+        return False
+
+    if next_url.startswith("//"):
+        return False
+
+    if next_url.startswith("/"):
+        return True
+
+    return False
 
 
 def get_oauth_router(
@@ -71,7 +98,10 @@ def get_oauth_router(
         response_model=OAuth2AuthorizeResponse,
     )
     async def authorize(
-        request: Request, response: Response, scopes: list[str] = Query(None)
+        request: Request,
+        response: Response,
+        scopes: list[str] = Query(None),
+        next_url: str | None = None,
     ) -> OAuth2AuthorizeResponse:
         if redirect_url is not None:
             authorize_redirect_url = redirect_url
@@ -80,6 +110,8 @@ def get_oauth_router(
 
         csrf_token = generate_csrf_token()
         state_data: dict[str, str] = {CSRF_TOKEN_KEY: csrf_token}
+        if next_url and is_valid_next_url(next_url):
+            state_data[NEXT_URL_KEY] = next_url
         state = generate_state_token(state_data, state_secret)
         authorization_url = await oauth_client.get_authorization_url(
             authorize_redirect_url,
@@ -138,6 +170,7 @@ def get_oauth_router(
     )
     async def callback(
         request: Request,
+        response: Response,
         access_token_state: tuple[OAuth2Token, str] = Depends(
             oauth2_authorize_callback
         ),
@@ -166,6 +199,12 @@ def get_oauth_router(
             or not state_csrf_token
             or not secrets.compare_digest(cookie_csrf_token, state_csrf_token)
         ):
+            response.delete_cookie(
+                csrf_token_cookie_name,
+                path=csrf_token_cookie_path,
+                domain=csrf_token_cookie_domain,
+                samesite=csrf_token_cookie_samesite,
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=ErrorCode.OAUTH_INVALID_STATE,
@@ -176,6 +215,12 @@ def get_oauth_router(
         )
 
         if account_email is None:
+            response.delete_cookie(
+                csrf_token_cookie_name,
+                path=csrf_token_cookie_path,
+                domain=csrf_token_cookie_domain,
+                samesite=csrf_token_cookie_samesite,
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=ErrorCode.OAUTH_NOT_AVAILABLE_EMAIL,
@@ -194,21 +239,46 @@ def get_oauth_router(
                 is_verified_by_default=is_verified_by_default,
             )
         except UserAlreadyExists:
+            response.delete_cookie(
+                csrf_token_cookie_name,
+                path=csrf_token_cookie_path,
+                domain=csrf_token_cookie_domain,
+                samesite=csrf_token_cookie_samesite,
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=ErrorCode.OAUTH_USER_ALREADY_EXISTS,
             )
 
         if not user.is_active:
+            response.delete_cookie(
+                csrf_token_cookie_name,
+                path=csrf_token_cookie_path,
+                domain=csrf_token_cookie_domain,
+                samesite=csrf_token_cookie_samesite,
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=ErrorCode.LOGIN_BAD_CREDENTIALS,
             )
 
         # Authenticate
-        response = await backend.login(strategy, user)
-        await user_manager.on_after_login(user, request, response)
-        return response
+        auth_response = await backend.login(strategy, user)
+        await user_manager.on_after_login(user, request, auth_response)
+
+        # Extract next_url from state and clear CSRF cookie
+        next_url = state_data.get(NEXT_URL_KEY)
+        response.delete_cookie(
+            csrf_token_cookie_name,
+            path=csrf_token_cookie_path,
+            domain=csrf_token_cookie_domain,
+            samesite=csrf_token_cookie_samesite,
+        )
+
+        if next_url:
+            return Response(status_code=303, headers={"Location": next_url})
+
+        return auth_response
 
     return router
 
@@ -258,6 +328,7 @@ def get_oauth_associate_router(
         request: Request,
         response: Response,
         scopes: list[str] = Query(None),
+        next_url: str | None = None,
         user: models.UP = Depends(get_current_active_user),
     ) -> OAuth2AuthorizeResponse:
         if redirect_url is not None:
@@ -267,6 +338,8 @@ def get_oauth_associate_router(
 
         csrf_token = generate_csrf_token()
         state_data: dict[str, str] = {"sub": str(user.id), CSRF_TOKEN_KEY: csrf_token}
+        if next_url and is_valid_next_url(next_url):
+            state_data[NEXT_URL_KEY] = next_url
         state = generate_state_token(state_data, state_secret)
         authorization_url = await oauth_client.get_authorization_url(
             authorize_redirect_url,
@@ -322,6 +395,7 @@ def get_oauth_associate_router(
     )
     async def callback(
         request: Request,
+        response: Response,
         user: models.UP = Depends(get_current_active_user),
         access_token_state: tuple[OAuth2Token, str] = Depends(
             oauth2_authorize_callback
@@ -333,11 +407,23 @@ def get_oauth_associate_router(
         try:
             state_data = decode_jwt(state, state_secret, [STATE_TOKEN_AUDIENCE])
         except jwt.DecodeError:
+            response.delete_cookie(
+                csrf_token_cookie_name,
+                path=csrf_token_cookie_path,
+                domain=csrf_token_cookie_domain,
+                samesite=csrf_token_cookie_samesite,
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=ErrorCode.ACCESS_TOKEN_DECODE_ERROR,
             )
         except jwt.ExpiredSignatureError:
+            response.delete_cookie(
+                csrf_token_cookie_name,
+                path=csrf_token_cookie_path,
+                domain=csrf_token_cookie_domain,
+                samesite=csrf_token_cookie_samesite,
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=ErrorCode.ACCESS_TOKEN_ALREADY_EXPIRED,
@@ -350,12 +436,24 @@ def get_oauth_associate_router(
             or not state_csrf_token
             or not secrets.compare_digest(cookie_csrf_token, state_csrf_token)
         ):
+            response.delete_cookie(
+                csrf_token_cookie_name,
+                path=csrf_token_cookie_path,
+                domain=csrf_token_cookie_domain,
+                samesite=csrf_token_cookie_samesite,
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=ErrorCode.OAUTH_INVALID_STATE,
             )
 
         if state_data["sub"] != str(user.id):
+            response.delete_cookie(
+                csrf_token_cookie_name,
+                path=csrf_token_cookie_path,
+                domain=csrf_token_cookie_domain,
+                samesite=csrf_token_cookie_samesite,
+            )
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST)
 
         account_id, account_email = await oauth_client.get_id_email(
@@ -363,6 +461,12 @@ def get_oauth_associate_router(
         )
 
         if account_email is None:
+            response.delete_cookie(
+                csrf_token_cookie_name,
+                path=csrf_token_cookie_path,
+                domain=csrf_token_cookie_domain,
+                samesite=csrf_token_cookie_samesite,
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=ErrorCode.OAUTH_NOT_AVAILABLE_EMAIL,
@@ -378,6 +482,18 @@ def get_oauth_associate_router(
             token.get("refresh_token"),
             request,
         )
+
+        # Clear CSRF cookie and handle next_url
+        response.delete_cookie(
+            csrf_token_cookie_name,
+            path=csrf_token_cookie_path,
+            domain=csrf_token_cookie_domain,
+            samesite=csrf_token_cookie_samesite,
+        )
+
+        next_url = state_data.get(NEXT_URL_KEY)
+        if next_url:
+            return Response(status_code=303, headers={"Location": next_url})
 
         return user_schema.model_validate(user)
 
