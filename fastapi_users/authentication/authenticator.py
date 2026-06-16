@@ -32,6 +32,36 @@ class DuplicateBackendNamesError(Exception):
     pass
 
 
+class AuthenticationContext(Generic[models.UP]):
+    """Authentication context containing user, token and backend information."""
+
+    user: models.UP | None
+    token: str | None
+    backend: AuthenticationBackend[models.UP, models.ID] | None
+
+    def __init__(
+        self,
+        user: models.UP | None,
+        token: str | None,
+        backend: AuthenticationBackend[models.UP, models.ID] | None,
+    ):
+        self.user = user
+        self.token = token
+        self.backend = backend
+
+    def __repr__(self) -> str:
+        return f"AuthenticationContext(user={self.user}, token={self.token}, backend={self.backend.name if self.backend else None})"
+
+    def __eq__(self, other: Any) -> bool:
+        if not isinstance(other, AuthenticationContext):
+            return False
+        return (
+            self.user == other.user
+            and self.token == other.token
+            and self.backend == other.backend
+        )
+
+
 EnabledBackendsDependency = DependencyCallable[
     Sequence[AuthenticationBackend[models.UP, models.ID]]
 ]
