@@ -67,6 +67,59 @@ class TestForgotPassword:
         response = await test_app_client.post("/forgot-password", json=json)
         assert response.status_code == status.HTTP_202_ACCEPTED
 
+    async def test_email_with_whitespace(
+        self,
+        async_method_mocker: AsyncMethodMocker,
+        test_app_client: httpx.AsyncClient,
+        user_manager: UserManagerMock,
+    ):
+        """Test that email with leading/trailing whitespace is normalized."""
+        async_method_mocker(user_manager, "forgot_password", return_value=None)
+        json = {"email": "  king.arthur@camelot.bt  "}
+        response = await test_app_client.post("/forgot-password", json=json)
+        assert response.status_code == status.HTTP_202_ACCEPTED
+        # Verify that the normalized email was passed to get_by_email
+        assert user_manager.get_by_email.call_args[0][0] == "king.arthur@camelot.bt"
+
+    async def test_email_with_mixed_case(
+        self,
+        async_method_mocker: AsyncMethodMocker,
+        test_app_client: httpx.AsyncClient,
+        user_manager: UserManagerMock,
+    ):
+        """Test that email domain part is lowercased."""
+        async_method_mocker(user_manager, "forgot_password", return_value=None)
+        json = {"email": "King.Arthur@Camelot.BT"}
+        response = await test_app_client.post("/forgot-password", json=json)
+        assert response.status_code == status.HTTP_202_ACCEPTED
+        # Verify that the normalized email was passed to get_by_email
+        assert user_manager.get_by_email.call_args[0][0] == "King.Arthur@camelot.bt"
+
+    async def test_email_with_both_whitespace_and_case(
+        self,
+        async_method_mocker: AsyncMethodMocker,
+        test_app_client: httpx.AsyncClient,
+        user_manager: UserManagerMock,
+    ):
+        """Test that email with both whitespace and mixed case is normalized."""
+        async_method_mocker(user_manager, "forgot_password", return_value=None)
+        json = {"email": "  King.Arthur@Camelot.BT  "}
+        response = await test_app_client.post("/forgot-password", json=json)
+        assert response.status_code == status.HTTP_202_ACCEPTED
+        # Verify that the normalized email was passed to get_by_email
+        assert user_manager.get_by_email.call_args[0][0] == "King.Arthur@camelot.bt"
+
+    async def test_not_existing_user_with_normalized_email(
+        self, test_app_client: httpx.AsyncClient, user_manager: UserManagerMock
+    ):
+        """Test that non-existent user still returns 202 even after normalization."""
+        user_manager.get_by_email.side_effect = UserNotExists()
+        json = {"email": "  nonexist@Example.COM  "}
+        response = await test_app_client.post("/forgot-password", json=json)
+        assert response.status_code == status.HTTP_202_ACCEPTED
+        assert user_manager.get_by_email.called
+        assert user_manager.get_by_email.call_args[0][0] == "nonexist@example.com"
+
 
 @pytest.mark.router
 @pytest.mark.asyncio

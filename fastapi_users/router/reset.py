@@ -48,8 +48,17 @@ def get_reset_password_router(
         email: EmailStr = Body(..., embed=True),
         user_manager: BaseUserManager[models.UP, models.ID] = Depends(get_user_manager),
     ):
+        # Normalize email: trim whitespace and lowercase the domain part
+        email_parts = email.strip().rsplit("@", 1)
+        if len(email_parts) != 2:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Invalid email address",
+            )
+        email_normalized = f"{email_parts[0]}@{email_parts[1].lower()}"
+
         try:
-            user = await user_manager.get_by_email(email)
+            user = await user_manager.get_by_email(email_normalized)
         except exceptions.UserNotExists:
             return None
 
