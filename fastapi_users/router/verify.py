@@ -22,8 +22,10 @@ def get_verify_router(
         email: EmailStr = Body(..., embed=True),
         user_manager: BaseUserManager[models.UP, models.ID] = Depends(get_user_manager),
     ):
+        normalized_email = email.strip().lower()
+
         try:
-            user = await user_manager.get_by_email(email)
+            user = await user_manager.get_by_email(normalized_email)
             await user_manager.request_verify(user, request)
         except (
             exceptions.UserNotExists,

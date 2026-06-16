@@ -128,7 +128,8 @@ class BaseUserManager(Generic[models.UP, models.ID]):
         """
         await self.validate_password(user_create.password, user_create)
 
-        existing_user = await self.user_db.get_by_email(user_create.email)
+        normalized_email = user_create.email.strip().lower()
+        existing_user = await self.user_db.get_by_email(normalized_email)
         if existing_user is not None:
             raise exceptions.UserAlreadyExists()
 
@@ -202,15 +203,17 @@ class BaseUserManager(Generic[models.UP, models.ID]):
         except exceptions.UserNotExists:
             try:
                 # Associate account
-                user = await self.get_by_email(account_email)
+                normalized_email = account_email.strip().lower()
+                user = await self.get_by_email(normalized_email)
                 if not associate_by_email:
                     raise exceptions.UserAlreadyExists()
                 user = await self.user_db.add_oauth_account(user, oauth_account_dict)
             except exceptions.UserNotExists:
                 # Create account
                 password = self.password_helper.generate()
+                normalized_account_email = account_email.strip().lower()
                 user_dict = {
-                    "email": account_email,
+                    "email": normalized_account_email,
                     "hashed_password": self.password_helper.hash(password),
                     "is_verified": is_verified_by_default,
                 }
@@ -333,8 +336,9 @@ class BaseUserManager(Generic[models.UP, models.ID]):
         except KeyError:
             raise exceptions.InvalidVerifyToken()
 
+        normalized_email = email.strip().lower()
         try:
-            user = await self.get_by_email(email)
+            user = await self.get_by_email(normalized_email)
         except exceptions.UserNotExists:
             raise exceptions.InvalidVerifyToken()
 
@@ -645,8 +649,9 @@ class BaseUserManager(Generic[models.UP, models.ID]):
         :return: The authenticated user of type models.UP if credentials are valid,
         otherwise None.
         """
+        normalized_username = credentials.username.strip().lower()
         try:
-            user = await self.get_by_email(credentials.username)
+            user = await self.get_by_email(normalized_username)
         except exceptions.UserNotExists:
             # Run the hasher to mitigate timing attack
             # Inspired from Django: https://code.djangoproject.com/ticket/20760
@@ -668,11 +673,12 @@ class BaseUserManager(Generic[models.UP, models.ID]):
         validated_update_dict = {}
         for field, value in update_dict.items():
             if field == "email" and value != user.email:
+                normalized_email = value.strip().lower()
                 try:
-                    await self.get_by_email(value)
+                    await self.get_by_email(normalized_email)
                     raise exceptions.UserAlreadyExists()
                 except exceptions.UserNotExists:
-                    validated_update_dict["email"] = value
+                    validated_update_dict["email"] = normalized_email
                     validated_update_dict["is_verified"] = False
             elif field == "password" and value is not None:
                 await self.validate_password(value, user)

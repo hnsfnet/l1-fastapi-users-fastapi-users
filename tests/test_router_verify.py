@@ -102,6 +102,34 @@ class TestVerifyTokenRequest:
         response = await test_app_client.post("/request-verify-token", json=json)
         assert response.status_code == status.HTTP_202_ACCEPTED
 
+    async def test_email_with_whitespace(
+        self,
+        async_method_mocker: AsyncMethodMocker,
+        test_app_client: httpx.AsyncClient,
+        user_manager: UserManagerMock,
+        user: UserModel,
+    ):
+        async_method_mocker(user_manager, "get_by_email", return_value=user)
+        async_method_mocker(user_manager, "request_verify", return_value=None)
+        json = {"email": "  user@example.com  "}
+        response = await test_app_client.post("/request-verify-token", json=json)
+        assert response.status_code == status.HTTP_202_ACCEPTED
+        user_manager.get_by_email.assert_called_once_with("user@example.com")
+
+    async def test_email_case_insensitive(
+        self,
+        async_method_mocker: AsyncMethodMocker,
+        test_app_client: httpx.AsyncClient,
+        user_manager: UserManagerMock,
+        user: UserModel,
+    ):
+        async_method_mocker(user_manager, "get_by_email", return_value=user)
+        async_method_mocker(user_manager, "request_verify", return_value=None)
+        json = {"email": "User@Example.Com"}
+        response = await test_app_client.post("/request-verify-token", json=json)
+        assert response.status_code == status.HTTP_202_ACCEPTED
+        user_manager.get_by_email.assert_called_once_with("user@example.com")
+
     async def test_token_namespace(
         self,
         get_user_manager,

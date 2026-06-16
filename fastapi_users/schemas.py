@@ -43,6 +43,17 @@ class BaseUserCreate(CreateUpdateDictModel):
     is_superuser: bool | None = False
     is_verified: bool | None = False
 
+    @classmethod
+    def model_modify_json_schema(cls, json_schema):
+        json_schema = super().model_modify_json_schema(json_schema)
+        # Ensure email field is properly documented for case-insensitive comparison
+        json_schema["properties"]["email"]["description"] = (
+            "Email address for the user. "
+            "Email is normalized to lowercase and stripped of whitespace "
+            "when comparing against existing users."
+        )
+        return json_schema
+
 
 class BaseUserUpdate(CreateUpdateDictModel):
     password: str | None = None
@@ -50,6 +61,17 @@ class BaseUserUpdate(CreateUpdateDictModel):
     is_active: bool | None = None
     is_superuser: bool | None = None
     is_verified: bool | None = None
+
+    @classmethod
+    def model_modify_json_schema(cls, json_schema):
+        json_schema = super().model_modify_json_schema(json_schema)
+        if "email" in json_schema["properties"]:
+            json_schema["properties"]["email"]["description"] = (
+                "Email address for the user. "
+                "Email is normalized to lowercase and stripped of whitespace "
+                "when comparing against existing users."
+            )
+        return json_schema
 
 
 U = TypeVar("U", bound=BaseUser)

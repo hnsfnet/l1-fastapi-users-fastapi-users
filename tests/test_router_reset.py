@@ -67,6 +67,30 @@ class TestForgotPassword:
         response = await test_app_client.post("/forgot-password", json=json)
         assert response.status_code == status.HTTP_202_ACCEPTED
 
+    async def test_email_with_whitespace(
+        self,
+        async_method_mocker: AsyncMethodMocker,
+        test_app_client: httpx.AsyncClient,
+        user_manager: UserManagerMock,
+    ):
+        async_method_mocker(user_manager, "forgot_password", return_value=None)
+        json = {"email": "  king.arthur@camelot.bt  "}
+        response = await test_app_client.post("/forgot-password", json=json)
+        assert response.status_code == status.HTTP_202_ACCEPTED
+        user_manager.get_by_email.assert_called_once_with("king.arthur@camelot.bt")
+
+    async def test_email_case_insensitive(
+        self,
+        async_method_mocker: AsyncMethodMocker,
+        test_app_client: httpx.AsyncClient,
+        user_manager: UserManagerMock,
+    ):
+        async_method_mocker(user_manager, "forgot_password", return_value=None)
+        json = {"email": "King.Arthur@Camelot.Bt"}
+        response = await test_app_client.post("/forgot-password", json=json)
+        assert response.status_code == status.HTTP_202_ACCEPTED
+        user_manager.get_by_email.assert_called_once_with("king.arthur@camelot.bt")
+
 
 @pytest.mark.router
 @pytest.mark.asyncio

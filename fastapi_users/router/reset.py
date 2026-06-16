@@ -48,8 +48,10 @@ def get_reset_password_router(
         email: EmailStr = Body(..., embed=True),
         user_manager: BaseUserManager[models.UP, models.ID] = Depends(get_user_manager),
     ):
+        normalized_email = email.strip().lower()
+
         try:
-            user = await user_manager.get_by_email(email)
+            user = await user_manager.get_by_email(normalized_email)
         except exceptions.UserNotExists:
             return None
 

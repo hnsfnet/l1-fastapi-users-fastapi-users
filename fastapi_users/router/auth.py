@@ -52,6 +52,8 @@ def get_auth_router(
         user_manager: BaseUserManager[models.UP, models.ID] = Depends(get_user_manager),
         strategy: Strategy[models.UP, models.ID] = Depends(backend.get_strategy),
     ):
+        normalized_username = credentials.username.strip().lower()
+        credentials.username = normalized_username
         user = await user_manager.authenticate(credentials)
 
         if user is None or not user.is_active:
