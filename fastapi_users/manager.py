@@ -349,7 +349,7 @@ class BaseUserManager(Generic[models.UP, models.ID]):
         if user.is_verified:
             raise exceptions.UserAlreadyVerified()
 
-        verified_user = await self._update(user, {"is_verified": True})
+        verified_user, _ = await self._update(user, {"is_verified": True})
 
         await self.on_after_verify(verified_user, request)
 
@@ -431,7 +431,7 @@ class BaseUserManager(Generic[models.UP, models.ID]):
         if not user.is_active:
             raise exceptions.UserInactive()
 
-        updated_user = await self._update(user, {"password": password})
+        updated_user, _ = await self._update(user, {"password": password})
 
         await self.on_after_reset_password(user, request)
 
@@ -443,7 +443,7 @@ class BaseUserManager(Generic[models.UP, models.ID]):
         user: models.UP,
         safe: bool = False,
         request: Request | None = None,
-    ) -> models.UP:
+    ) -> tuple[models.UP, dict[str, Any]]:
         """
         Update a user.
 
@@ -456,15 +456,15 @@ class BaseUserManager(Generic[models.UP, models.ID]):
         will be ignored during the update, defaults to False
         :param request: Optional FastAPI request that
         triggered the operation, defaults to None.
-        :return: The updated user of type models.UP.
+        :return: The updated user of type models.UP and a dict of changed fields.
         """
         if safe:
             updated_user_data = user_update.create_update_dict()
         else:
             updated_user_data = user_update.create_update_dict_superuser()
-        updated_user = await self._update(user, updated_user_data)
+        updated_user, changes = await self._update(user, updated_user_data)
         await self.on_after_update(updated_user, updated_user_data, request)
-        return updated_user
+        return updated_user, changes
 
     async def delete(
         self,
@@ -664,8 +664,9 @@ class BaseUserManager(Generic[models.UP, models.ID]):
 
         return user
 
-    async def _update(self, user: models.UP, update_dict: dict[str, Any]) -> models.UP:
+    async def _update(self, user: models.UP, update_dict: dict[str, Any]) -> tuple[models.UP, dict[str, Any]]:
         validated_update_dict = {}
+        changes = {}
         for field, value in update_dict.items():
             if field == "email" and value != user.email:
                 try:
@@ -674,14 +675,25 @@ class BaseUserManager(Generic[models.UP, models.ID]):
                 except exceptions.UserNotExists:
                     validated_update_dict["email"] = value
                     validated_update_dict["is_verified"] = False
+                    changes["email"] = value
+                    changes["is_verified"] = False
             elif field == "password" and value is not None:
                 await self.validate_password(value, user)
                 validated_update_dict["hashed_password"] = self.password_helper.hash(
                     value
                 )
+                changes["password"] = True
             else:
-                validated_update_dict[field] = value
-        return await self.user_db.update(user, validated_update_dict)
+                if hasattr(user, field):
+                    old_value = getattr(user, field)
+                    if value != old_value:
+                        validated_update_dict[field] = value
+                        changes[field] = value
+                else:
+                    validated_update_dict[field] = value
+                    changes[field] = value
+        updated_user = await self.user_db.update(user, validated_update_dict)
+        return updated_user, changes
 
 
 class UUIDIDMixin:

@@ -50,7 +50,6 @@ def get_users_router(
 
     @router.patch(
         "/me",
-        response_model=user_schema,
         dependencies=[Depends(get_current_active_user)],
         name="users:patch_current_user",
         responses={
@@ -91,10 +90,13 @@ def get_users_router(
         user_manager: BaseUserManager[models.UP, models.ID] = Depends(get_user_manager),
     ):
         try:
-            user = await user_manager.update(
+            user, changes = await user_manager.update(
                 user_update, user, safe=True, request=request
             )
-            return user_schema.model_validate(user)
+            response_data = user_schema.model_validate(user)
+            if request.query_params.get("include_changes", "false").lower() == "true":
+                return {"user": response_data, "changes": changes}
+            return response_data
         except exceptions.InvalidPasswordException as e:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
